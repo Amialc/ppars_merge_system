@@ -66,7 +66,9 @@ def main():
         if 'ppars' in signature and 'models' in signature:
             list_models.append(x[0])
             # print list_models
-
+    user = User.objects.using('a').all()[3]
+    print user
+    print user.customer_set.count()
 
 if __name__ == "__main__":
     main()
