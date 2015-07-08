@@ -1,3 +1,4 @@
+from pprint import pprint
 from django.conf import settings
 import sys
 import inspect
@@ -59,6 +60,23 @@ def check_for_conflict(model, bigger_db=None):
     return conflict
 
 
+def fk_tree(models=list_models):
+    d = {}
+    for model in models:
+        l = list(models)
+        l.remove(model)
+        for model2 in l:
+            try:
+                test = eval(model).objects.using('a').first()
+                eval('test.' + model2.lower() + '_set' + '.count()')
+            except Exception, e:
+                print e
+            else:
+                d.update({model: model2})
+            #print model, model2
+    pprint(d)
+
+
 def main():
     log('initializing')
     for x in [m for m in inspect.getmembers(sys.modules[__name__], inspect.isclass)]:
@@ -66,9 +84,11 @@ def main():
         if 'ppars' in signature and 'models' in signature:
             list_models.append(x[0])
             # print list_models
-    user = User.objects.using('a').all()[3]
-    print user
-    print user.customer_set.count()
+    # user = User.objects.using('a').all()[3]
+    # print user
+    # print user.customer_set.count()
+    fk_tree()
+
 
 if __name__ == "__main__":
     main()
