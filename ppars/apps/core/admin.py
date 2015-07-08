@@ -1,6 +1,6 @@
 from django.contrib import admin
-
-from ppars.apps.core.models import Plan, Carrier, UserProfile, AutoRefill, ImportLog,\
+from django.contrib.auth.models import User
+from .models import Plan, Carrier, UserProfile, AutoRefill, ImportLog,\
     CompanyProfile, PhoneNumber, Log, \
     CommandLog, Customer, CaptchaLogs, CarrierAdmin, UnusedPin, Transaction, \
     PlanDiscount, TransactionStep, ConfirmDP, PinReport, News, TransactionError
@@ -9,7 +9,7 @@ from .resources import PlanAdmin,  UserProfileAdmin,\
     CarrierResourceAdmin, CarrierAdminResourceAdmin, \
     PlanDiscountAdmin,  \
     UnusedPinAdmin,  CaptchaLogsAdmin, ImportLogAdmin, \
-    CommandLogAdmin  #TransactionAdmin, TransactionStepAdmin, PhoneNumberAdmin, CustomerAdmin,
+    CommandLogAdmin, AutoRefillResourceAdmin, UserAdmin #TransactionAdmin, TransactionStepAdmin, PhoneNumberAdmin, CustomerAdmin,
 import tasks
 
 

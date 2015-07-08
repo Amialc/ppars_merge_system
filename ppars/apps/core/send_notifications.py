@@ -1,14 +1,12 @@
 import logging
 import traceback
-
 from django.conf import settings
 from django.core.urlresolvers import reverse
-
 from ppars.apps.charge.models import Charge, ChargeStep, TransactionCharge
 from ppars.apps.core.models import Transaction, UserProfile, CompanyProfile, \
     TransactionStep, TransactionError, Customer
 from ppars.apps.notification.models import Notification, CustomPreChargeMessage
-from ppars.apps.core.notifications import messages
+from notifications import messages
 
 logger = logging.getLogger('ppars')
 

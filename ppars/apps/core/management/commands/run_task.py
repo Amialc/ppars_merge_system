@@ -12,7 +12,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         print "start core"
-        # prerefill_job()
+        prerefill_job()
         midnight_job()
         # news_message_job.delay()
         print "done"

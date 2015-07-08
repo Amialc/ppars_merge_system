@@ -1,9 +1,5 @@
 import logging
 import traceback
-import time
-import json
-import cookielib
-
 from django.conf import settings
 import requests
 from requests.auth import HTTPBasicAuth
@@ -11,11 +7,14 @@ from suds.transport.https import WindowsHttpAuthenticated
 from suds.xsd.doctor import ImportDoctor, Import
 from suds.client import Client as WSClient
 from BeautifulSoup import BeautifulSoup
+import time
+import json
 import mechanize
-
-from ppars.apps.core.notifications import messages
+import cookielib
+from notifications import messages
 from ppars.apps.core.models import CompanyProfile
 from ppars.apps.notification.models import Notification
+
 
 logger = logging.getLogger('ppars')
 COMPLETED = "Completed"
@@ -242,6 +241,7 @@ def dpapi_topup(form_fields):
         req.PhoneNumber = form_fields['PhoneNumber']
         req.OfferingId = form_fields['OfferingId']
         req.Amount = form_fields['Amount']
+        req.ProviderId = form_fields['ProviderId']
         try:
             request_pin = client.service.TopUpRequest(req)
         except Exception, e:

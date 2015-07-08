@@ -1,13 +1,13 @@
-import os
 from django.conf import settings
 import sys
+import inspect
 
 settings.configure(
-    DEBUG=True,
+    # DEBUG=True,
     DATABASES={
         'default': {
             'ENGINE': 'django.db.backends.mysql',
-            'NAME': 'ppars_merged',
+            'NAME': 'ppars_merged_2',
             'USER': 'root',
             'PASSWORD': '',
             'HOST': '127.0.0.1',
@@ -26,7 +26,7 @@ settings.configure(
             'PASSWORD': '',
             'HOST': '127.0.0.1', }
     },
-    INSTALLED_APPS=("ppars",),
+    INSTALLED_APPS=("ppars.apps",),
     ENCRYPTED_FIELDS_KEYDIR='fieldkeys_dev',
 )
 
@@ -36,26 +36,36 @@ from ppars.apps.charge.models import *
 from ppars.apps.core.models import *
 from ppars.apps.notification.models import *
 from ppars.apps.price.models import *
+from django.contrib.auth.models import User
+
+list_models = []
 
 
 def log(message):
     if settings.DEBUG:
         print message
 
-def main():
+
+def check_for_conflict(model, bigger_db=None):
+    if bigger_db is None:
+        bigger_db = 'a' if model.objects.using('a').count() > model.objects.using('b').count() else 'b'
+        not_bigger = 'b' if bigger_db is 'a' else 'a'
     conflict = []
+    for m in model.objects.using(bigger_db).all():
+        other_m = model.objects.using(not_bigger).filter(id=m.id)
+        if other_m.exists():
+            log('conflict found for model %s with object %s' % (model, other_m))
+            conflict.append(other_m)
+    return conflict
+
+
+def main():
     log('initializing')
-    customers_a = Customer.objects.using('a').all()
-    customers_b = Customer.objects.using('b').all()
-    bigger_db = 'a' if customers_a.count() > customers_b.count() else 'b'
-    not_bigger = 'b' if bigger_db is 'a' else 'b'
-    Customer.objects.all().delete() #cleaning default database
-    for customer in Customer.objects.using(bigger_db).all():
-        customer_other = Customer.objects.using(not_bigger).filter(id=customer.id)
-        if customer_other.exists():
-            log("Found conflict with %s" % customer_other)
-            conflict.append(customer_other)
-    print len(conflict)
+    for x in [m for m in inspect.getmembers(sys.modules[__name__], inspect.isclass)]:
+        signature = x[1].__module__.split('.')
+        if 'ppars' in signature and 'models' in signature:
+            list_models.append(x[0])
+            # print list_models
 
 
 if __name__ == "__main__":

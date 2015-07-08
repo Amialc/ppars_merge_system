@@ -2,6 +2,7 @@ from django.db import models
 from django.core.urlresolvers import reverse
 from django.db.models.signals import pre_save, post_save, pre_delete
 from django.dispatch import receiver
+from gadjo.requestprovider.signals import get_request
 from ppars.apps.core import fields
 from ppars.apps.core.models import Plan, Carrier, CompanyProfile, Log
 

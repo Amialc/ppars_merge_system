@@ -4,8 +4,6 @@ import hashlib
 import time
 import logging
 import traceback
-from datetime import timedelta
-
 from dateutil.relativedelta import relativedelta
 from django.conf import settings
 from django.contrib.auth.models import User
@@ -17,14 +15,19 @@ from django.db.models import signals
 from django.dispatch import receiver
 import pytz
 from twilio.rest import TwilioRestClient
+from django.db.models import Q
+
 import authorize
 from asana import asana
 from pytz import timezone
-
+from datetime import timedelta
+from pytz import utc
 from ext_lib import url_with_querystring
 from pysimplesoap.simplexml import SimpleXMLElement
 from pysimplesoap.client import SoapClient
-from ppars.apps.core import fields
+from gadjo.requestprovider.signals import get_request
+
+import fields
 
 logger = logging.getLogger('ppars')
 
@@ -611,6 +614,8 @@ class Customer(models.Model):
             result = response
         return result
 
+
+
     @property
     def has_local_cards(self):
         # from ppars.apps.card.models import Card
@@ -672,7 +677,7 @@ class Customer(models.Model):
 class PhoneNumber(models.Model):
     company = fields.BigForeignKey(CompanyProfile)
     customer = fields.BigForeignKey(Customer, null=True)
-    number = models.CharField(max_length=10)
+    number = models.CharField(max_length=12)
 
     def __unicode__(self):
         return u'%s' % self.number
@@ -703,36 +708,50 @@ class CarrierAdmin(models.Model):
 
 
 class AutoRefill(models.Model):
+    MD = 'MD'
+    MN = 'MN'
+    AFTER_MID_NIGHT = '1201AM'
+    ONE_AM = '1AM'
+    ONE_HALF_HOUR_AM = '130AM'
+    TWO_AM = '2AM'
+    AM_AND_ONE_MINUET_PM = '12pm&1201am'
+
     SCHEDULE_TYPE_CHOICES = (
-        ('MD', 'Mid-Day'),
-        ('MN', '11:59 PM.'),
-        ('1201AM', '12:01 AM.'),
-        ('1AM', '1 AM.'),
-        ('130AM', '1:30 AM.'),
-        ('2AM', '2 AM.'),
+        (MD, 'Mid-Day'),
+        (MN, '11:59 PM.'),
+        (AFTER_MID_NIGHT, '12:01 AM.'),
+        (ONE_AM, '1 AM.'),
+        (ONE_HALF_HOUR_AM, '1:30 AM.'),
+        (TWO_AM, '2 AM.'),
+        (AM_AND_ONE_MINUET_PM, '12PM & 12:01AM'),
     )
+    REFILL_FR = 'FR'
+    REFILL_GP = 'GP'
     REFILL_TYPE_CHOICES = (
-        ('FR', 'Full Refill/Topup'),
-        ('GP', 'Get Pin'),
+        (REFILL_FR, 'Full Refill/Topup'),
+        (REFILL_GP, 'Get Pin'),
     )
+    TRIGGER_MN = 'MN'
+    TRIGGER_SC = 'SC'
+    TRIGGER_AP = 'AP'
     TRIGGER_TYPE_CHOICES = (
-        ('MN', 'Manual Refill'),
-        ('SC', 'Scheduled Refill'),
-        ('AP', 'API Refill'),
+        (TRIGGER_MN, 'Manual Refill'),
+        (TRIGGER_SC, 'Scheduled Refill'),
+        (TRIGGER_AP, 'API Refill'),
     )
     id = fields.BigAutoField(primary_key=True)
     user = fields.BigForeignKey(User, null=True, on_delete=models.SET_NULL)
     company = fields.BigForeignKey(CompanyProfile, blank=True, null=True)
     customer = fields.BigForeignKey(Customer)
-    phone_number = models.CharField(max_length=10)
+    phone_number = models.CharField(max_length=12)
     plan = fields.BigForeignKey(Plan)
-    refill_type = models.CharField(max_length=2, default='FR', choices=REFILL_TYPE_CHOICES)
+    refill_type = models.CharField(max_length=2, default=REFILL_FR, choices=REFILL_TYPE_CHOICES)
     renewal_date = models.DateField(blank=True, null=True)
     renewal_end_date = models.DateField(blank=True, null=True)
     renewal_interval = models.IntegerField(max_length=3, blank=True, null=True)
     last_renewal_status = models.CharField(max_length=50, null=True, blank=True)
     last_renewal_date = models.DateField(blank=True, null=True)
-    schedule = models.CharField(max_length=6, choices=SCHEDULE_TYPE_CHOICES, default='MN', null=True, blank=True)
+    schedule = models.CharField(max_length=11, choices=SCHEDULE_TYPE_CHOICES, default=MN, null=True, blank=True)
     notes = models.CharField(max_length=500, blank=True, null=True)
     trigger = models.CharField(max_length=2, choices=TRIGGER_TYPE_CHOICES, blank=True)
     pin = models.CharField(max_length=256, null=True, blank=True)
@@ -740,7 +759,7 @@ class AutoRefill(models.Model):
     created = models.DateTimeField(("Created at"), auto_now_add=True)
     updated = models.DateTimeField(verbose_name=("Updated at"), auto_now=True)
     pre_refill_sms = models.BooleanField(default=False)
-    pre_refill_sms_number = models.CharField(max_length=10, null=True, blank=True)
+    pre_refill_sms_number = models.CharField(max_length=12, null=True, blank=True)
 
     # created = models.DateTimeField(("Created at"))
     # updated = models.DateTimeField(verbose_name=("Updated at"))
@@ -868,7 +887,7 @@ class Transaction(models.Model):
     user = fields.BigForeignKey(User, null=True, on_delete=models.SET_NULL)
     company = fields.BigForeignKey(CompanyProfile, blank=True, null=True)
     plan_str = models.CharField(max_length=256, null=True)
-    phone_number_str = models.CharField(max_length=10, null=True)
+    phone_number_str = models.CharField(max_length=12, null=True)
     customer_str = models.CharField(max_length=256, null=True)
     refill_type_str = models.CharField(max_length=256, null=True)
     autorefill = fields.BigForeignKey(AutoRefill, on_delete=models.SET_NULL, null=True)
@@ -1523,7 +1542,8 @@ class News(models.Model):
     CATEGORIES = (
         ('BF', 'Bug Fix'),
         ('NF', 'New Features'),
-        ('IN', 'Instructions/FAQ')
+        ('IN', 'Instructions/FAQ'),
+        ('OP', 'Optional Paid Futures')
     )
     title = models.CharField(max_length=150, blank=True)
     category = models.CharField(max_length=2, choices=CATEGORIES)
@@ -1677,3 +1697,4 @@ def logging_delete(sender, instance, **kwargs):
 
 
 # DO NOT DELETE. IT IS FOR SIGNALS
+from . import receivers

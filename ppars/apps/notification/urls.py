@@ -1,7 +1,7 @@
 from django.conf.urls import patterns, url
 from django.contrib.auth.decorators import login_required
 
-from ppars.apps.notification.views import SpamMessageCreate, CustomPreChargeMessageDetail
+from views import SpamMessageCreate, CustomPreChargeMessageDetail
 
 urlpatterns = patterns('',
     url(r'^create/$', login_required(SpamMessageCreate.as_view()), name='sms_create'),

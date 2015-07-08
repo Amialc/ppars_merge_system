@@ -88,38 +88,28 @@ class RechargePhone:
         self.transaction.add_transaction_step('recharge phone', 'begin', 'S', '')
         plan = self.transaction.autorefill.plan
 
+        form_fields = {
+                    'username': self.company.dollar_user,
+                    'password': self.company.dollar_pass,
+                    'Amount': plan.plan_cost,
+                    'PhoneNumber': self.transaction.autorefill.phone_number,
+        }
         if self.company.dollar_type == 'A':
             self.transaction.add_transaction_step('recharge phone', 'api_begin', 'S', 'Initializing the dollarphone API client')
             if not plan.api_id:
                 raise Exception('API Id for this plan has not been updated, please request the admin to update the plan with the API ID')
-            form_fields = {
-                    'username': self.company.dollar_user,
-                    'password': self.company.dollar_pass,
-                    'OfferingId': plan.api_id,
-                    'Amount': plan.plan_cost,
-                    'PhoneNumber': self.transaction.autorefill.phone_number,
-                    'Transaction': self.transaction.id,
-                    'callbackUrl': self.custom_redirect_url('pparsb_response', self.transaction.id),
-            }
+            form_fields['OfferingId'] = plan.api_id
+            form_fields['ProviderId'] = 0
             self.transaction.add_transaction_step('recharge phone', 'api_request', 'S', 'Requesting topup from dollarphone API')
             status, adv_status = dpapi_topup(form_fields)
-
         else:
             self.transaction.add_transaction_step('recharge phone', 'site_begin', 'S', 'Initializing the dollarphone Site client')
-            form_fields = {
-                    'username': self.company.dollar_user,
-                    'password': self.company.dollar_pass,
-                    'Carrier': plan.carrier.name,
-                    'Plan': plan.plan_name,
-                    'Amount': '$%s' % plan.plan_cost,
-                    'PhoneNumber': self.transaction.autorefill.phone_number,
-                    'Transaction': self.transaction.id,
-                    'callbackUrl': self.custom_redirect_url('pparsb_response', self.transaction.id),
-            }
+            form_fields['Carrier'] = plan.carrier.name
+            form_fields['Plan'] = plan.plan_name
             self.transaction.add_transaction_step('recharge phone', 'site_request', 'S', 'Requesting topup from dollarphone Site')
             status, adv_status = dpsite_topup(form_fields)
-            if not status:
-                raise Exception(adv_status)
+        if not status:
+            raise Exception(adv_status)
 
         self.transaction.add_transaction_step('recharge phone', 'end', 'S', u'%s' % adv_status)
 

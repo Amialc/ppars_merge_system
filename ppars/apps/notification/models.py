@@ -9,6 +9,9 @@ from twilio.rest import TwilioRestClient
 from ppars.apps.core import fields
 from ppars.apps.core.models import CompanyProfile, Customer, Log, UserProfile
 
+from gadjo.requestprovider.signals import get_request
+
+
 class Notification(models.Model):
     MAIL = 'EM'
     SMS = 'SM'

@@ -1,6 +1,5 @@
 from django.contrib import admin
-
-from ppars.apps.notification.models import SpamMessage, SmsEmailGateway
+from models import Notification, SpamMessage, SmsEmailGateway
 
 
 class NotificationAdmin(admin.ModelAdmin):

@@ -1,13 +1,14 @@
 import logging
 import itertools
-
 from ppars.apps.core.check_customer_approve import CheckCustomerApprove
 from ppars.apps.core.check_payment import CheckPayments
 from ppars.apps.core.get_pin import GetPin
-from ppars.apps.core.models import Transaction, UserProfile
+from ppars.apps.core.models import Transaction, UserProfile, CompanyProfile
+from ppars.apps.core.recharge_phone import RechargePhone
 from ppars.apps.core.send_notifications import SendNotifications, \
     failed_prerefill_company_notification, \
     successful_prerefill_customer_notification
+
 
 logger = logging.getLogger('ppars')
 
@@ -95,7 +96,7 @@ class PreRefill:
                     retry_interval = self.company.short_retry_interval
                     if 'Please login to the Dollarphone and enter digit token.' in self.transaction.adv_status:
                         retry_interval = 30
-                    from ppars.apps.core.tasks import queue_prerefill
+                    from tasks import queue_prerefill
                     queue_prerefill.apply_async(args=[self.transaction.id], countdown=60*retry_interval)
                     self.transaction.add_transaction_step(self.transaction.current_step, 'retry_check', 'S', 'Transaction erred out, will be retried in %s minutes.' % retry_interval)
             except Exception, msg:

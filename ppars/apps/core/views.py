@@ -5,12 +5,11 @@ import json
 import calendar
 import csv
 import traceback
-import operator
-import re
-import cookielib
-
+from django.conf import settings
 import pytz
 import xlrd
+import operator
+import re
 from dateutil.relativedelta import relativedelta
 from django.contrib import messages
 from django.contrib.auth.models import User
@@ -19,20 +18,26 @@ from django.core.urlresolvers import reverse
 from django.http import HttpResponse, HttpResponseRedirect
 from django.shortcuts import render, get_object_or_404
 from django.template.defaultfilters import slugify
+from pprint import pprint
 from django.views.generic import ListView, DetailView
 from django.views.generic.edit import View, CreateView, DeleteView, UpdateView
 from django.utils import timezone as django_tz
 from django.core.validators import validate_email
 from django.forms import ValidationError
 from django.db.models import Q
+import cookielib
 import mechanize
 from lxml import etree
 from pytz import timezone
-
-from ppars.apps.core import forms, ext_lib
+import ext_lib
+import forms
+from itertools import chain
 from models import Customer, AutoRefill, Transaction, TransactionStep, Plan, Carrier,\
-    UnusedPin, CarrierAdmin,  PlanDiscount, CompanyProfile, ConfirmDP, ImportLog, PinReport, Log, UserProfile, News, PhoneNumber
+    UnusedPin, CarrierAdmin,  PlanDiscount, CompanyProfile, CommandLog, \
+    ConfirmDP, ImportLog, PinReport, Log, UserProfile, News, PhoneNumber
 from ppars.apps.charge.models import Charge, TransactionCharge
+from ppars.apps.accounts.forms import StrengthUserCreationForm, \
+    PparsStrengthUserCreationForm
 from tasks import queue_refill, queue_customer_import, queue_autorefill_import,\
     queue_import_customers_from_usaepay, \
     queue_compare_pins_with_dollarphone, queue_import_phone_numbers, \
@@ -176,12 +181,17 @@ class CustomerUpdate(View):
     def get(self, request, pk, *args, **kwargs):
         customer = get_object_or_404(Customer, pk=pk)
         form = forms.CustomerForm(instance=customer, request=request, initial={'phone_numbers': ",".join(PhoneNumber.objects.filter(customer=customer).values_list('number', flat=True)) })
+        amount = 0
+        for charge in Charge.objects.filter(used=False, customer=customer):
+            amount += charge.amount
         return render(request, self.template_name,
                       {
                           'form': form,
                           'customer': customer,
                           'object': customer,
                           'use_sellercloud': customer.company.use_sellercloud,
+                          'unused_charge_count': Charge.objects.filter(used=False, customer=customer).count(),
+                          'unused_charge_amount': amount
                       })
 
     def post(self, request, pk, *args, **kwargs):
@@ -864,19 +874,21 @@ class ManualRefill(View):
                 transaction_from.add_transaction_step('create similar',
                                                       'Created similar transaction',
                                                       TransactionStep.SUCCESS,
-                                                      'Created similar transaction <a href="%s">%s</a>' %
+                                                      'Created similar transaction <a href="%s">%s</a> by user %s' %
                                                       (reverse('transaction_detail',
                                                                args=[transaction.id]),
-                                                       transaction.id))
+                                                       transaction.id,
+                                                       request.user))
 
                 transaction_from.save()
                 transaction.add_transaction_step('create',
                                                  'Created from existing transaction',
                                                  TransactionStep.SUCCESS,
-                                                 'Created from transaction <a href="%s">%s</a>' %
+                                                 'Created from transaction <a href="%s">%s</a> by user %s' %
                                                  (reverse('transaction_detail',
                                                           args=[trans_id_from]),
-                                                  trans_id_from))
+                                                  trans_id_from,
+                                                  request.user))
                 transaction.save()
 
             if form.data["datetime_refill"] != "":
@@ -1229,12 +1241,16 @@ def ajax_search(request):
     if request.GET['search_for'][0] == '*' or request.GET['sSearch_0'] == 'Last4ofCC':
         # filtering company's customers
         for customer in Customer.objects.filter(creditcard__endswith=filters[0], company=request.user.profile.company):
-            unused_charges_count = ' Unused charge: <b>' + str(Charge.objects.filter(used=False, customer=customer).count()) + '</b>'
+            unused_charges_count = ' Unused charges: <b>' + str(Charge.objects.filter(used=False, customer=customer).count()) + '</b>'
+            unused_charges_amount = 0
+            for charge in Charge.objects.filter(used=False, customer=customer):
+                unused_charges_amount += charge.amount
             ajax_response['aaData'].append([type(customer).__name__,
                                                         '<a href=\'%s' % (reverse('customer_update', args=[customer.id])) +
                                                         '\'>' + customer.__unicode__() + '</a>' +
                                                         ' (<b>' + customer.get_charge_getaway_display() + '</b>)' +
-                                                        unused_charges_count])
+                                                        unused_charges_count + ' (<b>$' + str(unused_charges_amount)
+                                                        + '</b>)'])
         # filtering company's charges
         for charge in Charge.objects.filter(creditcard__endswith=filters[0], company=request.user.profile.company).order_by('-created'):
             ajax_response['iTotalRecords'] += 1
@@ -1260,6 +1276,43 @@ def ajax_search(request):
         return HttpResponse(json_data, content_type='application/json')
     #regular search
     else:
+        # filtering company's phone numbers
+        for phone_number in PhoneNumber.objects.filter(reduce(operator.and_, (Q(customer__first_name__icontains=val) |
+                                                                              Q(customer__middle_name__icontains=val) |
+                                                                              Q(customer__last_name__icontains=val) |
+                                                                              Q(number__icontains=val)
+                                                                              for val in filters)),
+                                                       company=request.user.profile.company).exclude(customer=None):
+            ajax_response['iTotalRecords'] += 1
+            if request.GET['sSearch_0'] == '' or request.GET['sSearch_0'] == 'All'\
+                    or request.GET['sSearch_0'] == 'PhoneNumber':
+                disabled = ''
+                if AutoRefill.objects.filter(phone_number=phone_number.number, customer=phone_number.customer, trigger='SC') and\
+                        phone_number.company.block_duplicate_schedule:
+                    disabled = ' style=\"background-color: grey; border-color: grey;\" disabled'
+                ajax_response['aaData'].append([type(phone_number).__name__, 'Phone number: <b>' + phone_number.number + '</b>'
+                                                ' for <a href=\'%s' % (reverse('customer_update', args=[phone_number.customer.id])) +
+                                                '\'>' + phone_number.customer.__unicode__() + '</a> '
+                                                + ' <div style=\"float: right\">' + ' <a href=\'%s' %
+                                                reverse('charge_list') + '?cid=' + str(phone_number.customer.id) +
+                                                '\' style=\"background-color: green\" class=\'btn '
+                                                'btn-primary btn-xs\'>Add cash payment</a> '
+                                                + ' <a href=\'%s' % reverse('manualrefill') + '?ph=' + phone_number.number + '&cid=' +
+                                                str(phone_number.customer.id) + '&lp=t' + '\' style=\"background-color: #366\"'
+                                                                             ' class=\'btn '
+                                                                             'btn-primary btn-xs\'>Recharge With Last'
+                                                                             ' Plan</a> ' + '<a href=\'%s' %
+                                                reverse('manualrefill') + '?ph=' + phone_number.number + '&cid=' + str(phone_number.customer.id) +
+                                                '\' class=\'btn btn-primary btn-xs\'>Recharge Now</a>' +
+                                                ' <a style=\"background-color: #4BA2B7;\" href=\'%s' %
+                                                reverse('autorefill_create') + '?ph=' + phone_number.number +
+                                                '&cid=' + str(phone_number.customer.id) + '&lp=t' +
+                                                '\' class=\'btn btn-info btn-xs\'' + disabled + '>' +
+                                                'Schedule With Last Plan</a>' +
+                                                ' <a href=\'%s' % reverse('autorefill_create') + '?ph=' + phone_number.number +
+                                                '&cid=' + str(phone_number.customer.id) + '\' class=\'btn btn-info btn-xs\''
+                                                                             + disabled + '>'
+                                                                             'Schedule Latter</a>' + '</div>'])
         # filtering company's customers
         customers = []
         filtered_customers = []
@@ -1307,7 +1360,10 @@ def ajax_search(request):
             ajax_response['iTotalRecords'] += 1
             if request.GET['sSearch_0'] == '' or request.GET['sSearch_0'] == 'All'\
                     or request.GET['sSearch_0'] == 'Customers':
-                unused_charges_count = ' Unused charge: <b>' + str(Charge.objects.filter(used=False, customer=customer).count()) + '</b>'
+                unused_charges_count = ' Unused charges: <b>' + str(Charge.objects.filter(used=False, customer=customer).count()) + '</b>'
+                unused_charges_amount = 0
+                for charge in Charge.objects.filter(used=False, customer=customer):
+                    unused_charges_amount += charge.amount
                 if just_number:
                     disabled = ''
                     if AutoRefill.objects.filter(phone_number=number, customer=customer, trigger='SC') and\
@@ -1317,7 +1373,8 @@ def ajax_search(request):
                                                     '<a href=\'%s' % (reverse('customer_update', args=[customer.id])) +
                                                     '\'>' + customer.__unicode__() + '</a>' +
                                                     ' (<b>' + customer.get_charge_getaway_display() + '</b>)'
-                                                    + unused_charges_count + ' <div style=\"float: right\">' + ' <a href=\'%s' %
+                                                    + unused_charges_count + ' (<b>$' + str(unused_charges_amount)
+                                                    + '</b>)' + ' <div style=\"float: right\">' + ' <a href=\'%s' %
                                                     reverse('charge_list') + '?cid=' + str(customer.id) +
                                                     '\' style=\"background-color: green\" class=\'btn '
                                                     'btn-primary btn-xs\'>Add cash payment</a> '
@@ -1342,51 +1399,15 @@ def ajax_search(request):
                                                     '<a href=\'%s' % (reverse('customer_update', args=[customer.id])) +
                                                     '\'>' + customer.__unicode__() + '</a>' +
                                                     ' (<b>' + customer.get_charge_getaway_display() + '</b>)' +
-                                                    unused_charges_count])
-        # filtering company's phone numbers
-        for phone_number in PhoneNumber.objects.filter(reduce(operator.and_, (Q(customer__first_name__icontains=val) |
-                                                                              Q(customer__middle_name__icontains=val) |
-                                                                              Q(customer__last_name__icontains=val) |
-                                                                              Q(number__icontains=val)
-                                                                              for val in filters)),
-                                                       company=request.user.profile.company).exclude(customer=None):
-            ajax_response['iTotalRecords'] += 1
-            if request.GET['sSearch_0'] == '' or request.GET['sSearch_0'] == 'All'\
-                    or request.GET['sSearch_0'] == 'PhoneNumber':
-                disabled = ''
-                if AutoRefill.objects.filter(phone_number=number, customer=customer, trigger='SC') and\
-                        customer.company.block_duplicate_schedule:
-                    disabled = ' style=\"background-color: grey; border-color: grey;\" disabled'
-                ajax_response['aaData'].append([type(phone_number).__name__, 'Phone number: <b>' + phone_number.number + '</b>'
-                                                ' for <a href=\'%s' % (reverse('customer_update', args=[phone_number.customer.id])) +
-                                                '\'>' + phone_number.customer.__unicode__() + '</a> '
-                                                + ' <div style=\"float: right\">' + ' <a href=\'%s' %
-                                                reverse('charge_list') + '?cid=' + str(phone_number.customer.id) +
-                                                '\' style=\"background-color: green\" class=\'btn '
-                                                'btn-primary btn-xs\'>Add cash payment</a> '
-                                                + ' <a href=\'%s' % reverse('manualrefill') + '?ph=' + phone_number.number + '&cid=' +
-                                                str(phone_number.customer.id) + '&lp=t' + '\' style=\"background-color: #366\"'
-                                                                             ' class=\'btn '
-                                                                             'btn-primary btn-xs\'>Recharge With Last'
-                                                                             ' Plan</a> ' + '<a href=\'%s' %
-                                                reverse('manualrefill') + '?ph=' + phone_number.number + '&cid=' + str(phone_number.customer.id) +
-                                                '\' class=\'btn btn-primary btn-xs\'>Recharge Now</a>' +
-                                                ' <a style=\"background-color: #4BA2B7;\" href=\'%s' %
-                                                reverse('autorefill_create') + '?ph=' + phone_number.number +
-                                                '&cid=' + str(phone_number.customer.id) + '&lp=t' +
-                                                '\' class=\'btn btn-info btn-xs\'' + disabled + '>' +
-                                                'Schedule With Last Plan</a>' +
-                                                ' <a href=\'%s' % reverse('autorefill_create') + '?ph=' + phone_number.number +
-                                                '&cid=' + str(phone_number.customer.id) + '\' class=\'btn btn-info btn-xs\''
-                                                                             + disabled + '>'
-                                                                             'Schedule Latter</a>' + '</div>'])
+                                                    unused_charges_count + ' (<b>$' + str(unused_charges_amount)
+                                                    + '</b>)'])
         # filtering company's autorefills
         for autorefill in AutoRefill.objects.filter(reduce(operator.and_, (Q(customer__first_name__icontains=val) |
                                                                            Q(customer__middle_name__icontains=val) |
                                                                            Q(customer__last_name__icontains=val) |
                                                                            Q(phone_number__icontains=val)
                                                                            for val in filters)),
-                                                    Q(trigger='AP') | Q(trigger='SC'),
+                                                    Q(trigger=AutoRefill.TRIGGER_AP) | Q(trigger=AutoRefill.TRIGGER_SC),
                                                     company=request.user.profile.company):
             ajax_response['iTotalRecords'] += 1
             if request.GET['sSearch_0'] == '' or request.GET['sSearch_0'] == 'All'\
@@ -1483,6 +1504,19 @@ def ajax_search(request):
         return HttpResponse(json_data, content_type='application/json')
 
 
+def ajax_refill_as_walk_in(request):
+    if request.GET['number'].isdigit() and len(request.GET['number']) == 10 and\
+            not PhoneNumber.objects.filter(number=request.GET['number'], company=request.user.profile.company):
+        customer = Customer.objects.create(company=request.user.profile.company, user=request.user, first_name='Walk',
+                                           last_name='in', charge_type=Customer.CASH, charge_getaway=Customer.CASH,
+                                           primary_email='', zip='', usaepay_custid='', sms_email=request.GET['number'])
+        PhoneNumber.objects.create(company=request.user.profile.company, customer=customer,
+                                   number=request.GET['number'])
+        return HttpResponse(json.dumps({'valid': True, 'id': str(customer.id)}), content_type='application/json')
+    else:
+        return HttpResponse(json.dumps({'valid': False, 'error': 'Customer with that number already exist.'}), content_type='application/json')
+
+
 def customer_transactions(request, pk):
     return render(request, 'core/customer_transactions.html', {'customer_transactions': pk,
                                                                'full_name': Customer.objects.get(id=pk).__unicode__()})
@@ -1577,8 +1611,8 @@ def ajax_customer_cc_charges(request):
     return HttpResponse(json_data, content_type='application/json')
 
 
-def ajax_schedule_monthly(request):
-    manual_refill = AutoRefill.objects.get(id=request.GET['id'])
+def ajax_schedule_monthly(request, pk):
+    manual_refill = AutoRefill.objects.get(id=int(pk))
     if manual_refill.customer.company == request.user.profile.company:
         if not (AutoRefill.objects.filter(customer=manual_refill.customer, trigger='SC',
                                           phone_number=manual_refill.phone_number) and
@@ -1830,6 +1864,10 @@ def ajax_transactions_list(request):
         filtered = filtered.filter(paid=True)
     elif request.GET['sSearch_8'] == 'False':
         filtered = filtered.filter(paid=False)
+    if request.GET['sSearch_9'] == 'True':
+        filtered = filtered.filter(completed=True)
+    elif request.GET['sSearch_9'] == 'False':
+        filtered = filtered.filter(completed=False)
     ajax_response = {"sEcho": request.GET['sEcho'], "aaData": [],
                      'iTotalRecords': Transaction.objects.filter(company=request.user.profile.company).count(),
                      'iTotalDisplayRecords': filtered.count()}
@@ -1843,8 +1881,8 @@ def ajax_transactions_list(request):
                        transaction.customer_str + '</a>'
         if TransactionCharge.objects.filter(transaction=transaction):
             cc_charge = '<a href=\'%s' % (reverse('charge_detail',
-                                                  args=[TransactionCharge.objects.get(transaction=transaction).charge.id])) + '\'>' +\
-                        str(TransactionCharge.objects.get(transaction=transaction).charge.id) + '</a>'
+                                                  args=[TransactionCharge.objects.filter(transaction=transaction)[0].charge.id])) + '\'>' +\
+                        str(TransactionCharge.objects.filter(transaction=transaction)[0].charge.id) + '</a>'
         ajax_response['aaData'].append(['<a href=\'%s' % (reverse('transaction_detail', args=[transaction.id])) + '\'>' +
                                         str(transaction.id) + '</a>', customer, transaction.phone_number_str,
                                         transaction.plan_str, transaction.refill_type_str, transaction.pin,
@@ -1904,10 +1942,9 @@ def ajax_transaction(request, pk):
     return render_to_json_response(data)
 
 
-def ajax_mark_transaction(request):
-    transaction_id = request.GET.get('id')
+def ajax_mark_transaction(request, pk):
     button = request.GET.get('button')
-    transaction = Transaction.objects.get(id=transaction_id)
+    transaction = Transaction.objects.get(id=int(pk))
     operation = ''
     adv_status = ''
     if button == 'paid':
@@ -1935,7 +1972,7 @@ def ajax_mark_transaction(request):
                                      TransactionStep.SUCCESS,
                                      adv_status)
     if button == 'prerefill_restart':
-        transaction.retry_count = 1
+        transaction.retry_count = 0
         transaction.state = Transaction.RETRY
         transaction.adv_status = 'prerefill restarted by user %s' % request.user
         transaction.save()
@@ -1943,7 +1980,7 @@ def ajax_mark_transaction(request):
         return HttpResponse()
     # restart transaction
     if button == 'restarted':
-        transaction.retry_count = 1
+        transaction.retry_count = 0
         transaction.state = Transaction.RETRY
         transaction.adv_status = 'Transaction restarted by user %s' % request.user
         transaction.save()

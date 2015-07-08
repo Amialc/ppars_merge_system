@@ -1,6 +1,5 @@
 from django.contrib import admin
-
-from ppars.apps.price.models import SellingPriceLevel, PlanSellingPrice
+from .models import SellingPriceLevel, PlanSellingPrice
 
 
 class PlanSellingPriceAdmin(admin.ModelAdmin):

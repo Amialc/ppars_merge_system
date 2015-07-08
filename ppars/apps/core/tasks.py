@@ -2,26 +2,25 @@ import functools
 import logging
 from datetime import datetime, timedelta, time
 import traceback
-
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.core.urlresolvers import reverse
 import pytz
-import requests
-from BeautifulSoup import BeautifulSoup
-from requests.auth import HTTPBasicAuth
-from django.utils import timezone
-from celery import task
-from celery.task import periodic_task
-from django_redis import get_redis_connection
-
 from ppars.apps.notification.models import Notification
 from ppars.apps.tzones.functions import crontab_with_correct_tz
+import requests
+from BeautifulSoup import BeautifulSoup
 from ppars.apps.core.prerefill import PreRefill
 from ppars.apps.core.send_notifications import \
     failed_check_refunds_customer_notification
 from pysimplesoap.client import SoapClient
-from ppars.apps.core.refill import Refill
+from requests.auth import HTTPBasicAuth
+from django.utils import timezone
+from celery.schedules import crontab
+from celery import task
+from celery.task import periodic_task
+from django_redis import get_redis_connection
+from refill import Refill
 import ext_lib
 from models import UserProfile, Customer, AutoRefill, Transaction, UnusedPin, \
     ImportLog, CompanyProfile, PhoneNumber, PinReport, Plan
@@ -68,34 +67,40 @@ logger = logging.getLogger(__name__)
 #   timezone: America/New_York
 
 
+# description: Scheduled Refill 12:00 PM
+@periodic_task(run_every=crontab_with_correct_tz(hour=12, minute=00))
+def am_and_one_pm_job():
+    schedule_refill(schedule=AutoRefill.AM_AND_ONE_MINUET_PM)
+
+
 # description: Scheduled Refill Midnight Job 23:59
 @periodic_task(run_every=crontab_with_correct_tz(hour=23, minute=59))
 def midnight_job():
-    schedule_refill(schedule='MN')
+    schedule_refill(schedule=AutoRefill.MN)
 
 
 # description: Scheduled Refill 12:01 AM Job
 @periodic_task(run_every=crontab_with_correct_tz(hour=00, minute=01))
 def after_midday_job():
-    schedule_refill(schedule='1201AM')
+    schedule_refill(schedule=AutoRefill.AFTER_MID_NIGHT)
 
 
 # description: Scheduled Refill 1 AM Job
 @periodic_task(run_every=crontab_with_correct_tz(hour=01, minute=00))
 def one_hour_day_job():
-    schedule_refill(schedule='1AM')
+    schedule_refill(schedule=AutoRefill.ONE_AM)
 
 
 # description: Scheduled Refill 1:30 AM Job
 @periodic_task(run_every=crontab_with_correct_tz(hour=01, minute=30))
 def one_hour_with_half_day_job():
-    schedule_refill(schedule='130AM')
+    schedule_refill(schedule=AutoRefill.ONE_HALF_HOUR_AM)
 
 
 # description: Scheduled Refill 2 AM Job
 @periodic_task(run_every=crontab_with_correct_tz(hour=02, minute=00))
 def two_hour_day_job():
-    schedule_refill(schedule='2AM')
+    schedule_refill(schedule=AutoRefill.TWO_AM)
 
 
 # description:  3 AM Job
@@ -107,7 +112,7 @@ def check_refunds_job():
 # description: 11:59 AM
 @periodic_task(run_every=crontab_with_correct_tz(hour=11, minute=59))
 def midday_job():
-    schedule_refill(schedule='MD')
+    schedule_refill(schedule=AutoRefill.MD)
 
 
 # description: Prepered Scheduled Refill 14:00 by US/Eastern
@@ -149,6 +154,11 @@ def queue_prerefill(transaction_id):
 @task
 def queue_refill(transaction_id):
     Refill(transaction_id).main()
+
+
+@task
+def schedule_time_add_on(transaction_id):
+    Refill(transaction_id).recharge_phone()
 
 
 def schedule_refill(schedule):
@@ -310,8 +320,8 @@ def queue_autorefill_import(cache_data):
             try:
                 autorefill['user'] = user
                 autorefill['company'] = user.profile.company
-                autorefill['trigger'] = 'SC'
-                autorefill['refill_type'] = 'FR'
+                autorefill['trigger'] = AutoRefill.TRIGGER_SC
+                autorefill['refill_type'] = AutoRefill.REFILL_FR
                 autorefill['schedule'] = schedule_types[autorefill['schedule']]
                 autorefill['pre_refill_sms'] = False
                 if autorefill['enabled'].upper() == 'TRUE':

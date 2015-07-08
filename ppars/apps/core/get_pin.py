@@ -1,10 +1,8 @@
 import logging
 import traceback
-
-from django.core.urlresolvers import reverse
-
 from ppars.apps.core.dollarphone import dpsite_purchase_pin, dpapi_purchase_pin
 from ppars.apps.core.models import Transaction, UserProfile, Plan
+from django.core.urlresolvers import reverse
 
 logger = logging.getLogger('ppars')
 
@@ -78,7 +76,7 @@ class GetPin:
     def search_unused_pin(self, plan):
         # Search unused pins in system
         self.transaction.add_transaction_step('get pin', 'unused pin', 'S', 'Looking for unused pins')
-        from ppars.apps.core.tasks import get_unused_pin
+        from tasks import get_unused_pin
         unused_pin = get_unused_pin(plan, self.company)
         if unused_pin:
             unused_pin.transaction = self.transaction

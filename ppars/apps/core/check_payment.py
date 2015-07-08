@@ -34,12 +34,22 @@ class CheckPayments:
                         'E',
                         self.transaction.adv_status)
                     return self.transaction
-                self.processing_charges()
-                if self.transaction.need_paid:
-                    if self.make_new_charge():
+                if not self.transaction.retry_count:
+                    self.processing_charges()
+                    if self.transaction.need_paid:
+                        if self.make_new_charge():
+                            self.transaction.paid = True
+                    else:
                         self.transaction.paid = True
                 else:
-                    self.transaction.paid = True
+                    self.transaction.status = self.transaction.ERROR
+                    self.transaction.state = self.transaction.COMPLETED
+                    self.transaction.add_transaction_step(
+                        'check payment',
+                        'not paid',
+                        'E',
+                        'Charge was failed, refill will not be continued.')
+                    self.transaction.retry_count = 0
             except Exception, e:
                 logger.error("Exception: %s. Trace: %s." % (e, traceback.format_exc(limit=10)))
                 self.transaction.add_transaction_step('check payment', 'error', 'E', u'%s' % e)

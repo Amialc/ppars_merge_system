@@ -1,18 +1,17 @@
 import logging
 from datetime import timedelta, datetime
 import decimal
-
-import pytz
-from celery import task
-from celery.task import periodic_task
-
 from ppars.apps.core.send_notifications import \
     successful_precharge_customer_notification, \
     failed_precharge_customer_notification, \
     failed_precharge_company_notification, prepayment_customer_notification, \
     check_message_customer, check_message_company
+import pytz
 from ppars.apps.tzones.functions import crontab_with_correct_tz
-from ppars.apps.charge.models import Charge, ChargeError
+from celery.schedules import crontab
+from celery import task
+from celery.task import periodic_task
+from models import Charge, ChargeError
 from ppars.apps.core.models import AutoRefill, CompanyProfile, Customer, Plan
 
 logger = logging.getLogger(__name__)
@@ -86,7 +85,7 @@ def queue_precharge(charge):
     except Exception, e:
         charge.add_charge_step('precharge', Charge.ERROR, 'Charge ended with error: "%s"' % e)
         charge_error, created = ChargeError.objects.get_or_create(charge=charge, step='charge', message='%s' % e)
-        if created and check_message_customer(str(e)):
+        if created and check_message_customer(str(e)) and not check_message_company(str(e)):
             failed_precharge_customer_notification(charge)
         if charge.company.precharge_failed_email or check_message_company(str(e)):
             failed_precharge_company_notification(charge)

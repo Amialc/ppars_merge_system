@@ -1,21 +1,19 @@
 import calendar
 import logging
 import traceback
+from celery.task import periodic_task, task
 from datetime import timedelta, datetime, time, date
 import decimal
-
-from celery.task import periodic_task, task
 from django.conf import settings
 from django.core.urlresolvers import reverse
 from django.utils import timezone
 import pytz
-
 from ppars.apps.charge.tasks import search_unused_charges
 from ppars.apps.tzones.functions import crontab_with_correct_tz
 from ppars.apps.charge.models import Charge
 from ppars.apps.core.models import CompanyProfile, AutoRefill, Customer, \
     Transaction, News, PhoneNumber, UserProfile
-from ppars.apps.notification.models import Notification, SpamMessage, NewsMessage
+from models import Notification, SpamMessage, NewsMessage
 
 logger = logging.getLogger('ppars')
 

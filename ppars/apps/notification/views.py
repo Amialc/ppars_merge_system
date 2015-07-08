@@ -2,10 +2,9 @@ from django.contrib import messages
 from django.shortcuts import get_object_or_404, render
 from django.views.generic import View
 from django.views.generic.edit import CreateView
-
 from models import SpamMessage, CustomPreChargeMessage
 from forms import SpamMessageForm, CustomPreChargeMessageForm
-from ppars.apps.notification.tasks import queue_send_sms
+from tasks import queue_send_sms
 
 
 class SpamMessageCreate(CreateView):

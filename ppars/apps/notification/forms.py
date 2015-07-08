@@ -1,6 +1,5 @@
 from django import forms
-
-from ppars.apps.notification.models import SpamMessage, CustomPreChargeMessage
+from models import SpamMessage, CustomPreChargeMessage
 
 
 class SpamMessageForm(forms.ModelForm):

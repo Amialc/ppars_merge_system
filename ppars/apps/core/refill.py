@@ -1,13 +1,16 @@
 import logging
 import itertools
-
 from ppars.apps.core.check_customer_approve import CheckCustomerApprove
 from ppars.apps.core.check_payment import CheckPayments
 from ppars.apps.core.company_notifications import send_pin_error_mail
 from ppars.apps.core.get_pin import GetPin
-from ppars.apps.core.models import Transaction, UserProfile
+from ppars.apps.core.models import Transaction, UserProfile, CompanyProfile, AutoRefill
 from ppars.apps.core.recharge_phone import RechargePhone
 from ppars.apps.core.send_notifications import SendNotifications
+from datetime import datetime
+from pytz import timezone
+from pytz import utc
+
 
 logger = logging.getLogger('ppars')
 
@@ -19,8 +22,8 @@ class Refill:
         self.company = UserProfile.objects.get(user=self.transaction.user).company
 
         self.processes = {
-            'GP': ['check_payment', 'get_pin', 'send_notifications'],
-            'FR': ['check_payment', 'get_pin', 'recharge_phone', 'send_notifications'],
+            AutoRefill.REFILL_GP: ['check_payment', 'get_pin', 'send_notifications'],
+            AutoRefill.REFILL_FR: ['check_payment', 'get_pin', 'recharge_phone', 'send_notifications'],
         }
         # checking confirmation from customer
         if not self.transaction.locked and self.transaction.state != Transaction.COMPLETED:
@@ -53,6 +56,12 @@ class Refill:
                     'status': 'Success',
                     'message': u'Autorefill transaction %s succeeded.' % self.transaction.id,
                 }
+                if autorefill.schedule == autorefill.AM_AND_ONE_MINUET_PM:
+                    from ppars.apps.core.tasks import schedule_time_add_on
+                    eastern_time_today = timezone('US/Eastern').localize(datetime.utcnow())
+                    eastern_time = eastern_time_today.replace(hour=00, minute=01)
+                    utc_datetime = eastern_time.astimezone(utc)
+                    schedule_time_add_on.apply_async(args=[self.transaction.id], eta=utc_datetime)
                 if self.transaction.state != Transaction.COMPLETED:
                     self.transaction.status = Transaction.SUCCESS
                     self.transaction.state = Transaction.COMPLETED
@@ -104,7 +113,7 @@ class Refill:
                         retry_interval = self.company.long_retry_interval
                     if 'Please login to the Dollarphone and enter digit token.' in self.transaction.adv_status:
                         retry_interval = 30
-                    from ppars.apps.core.tasks import queue_refill
+                    from .tasks import queue_refill
                     queue_refill.apply_async(args=[self.transaction.id], countdown=60*retry_interval)
                     self.transaction.add_transaction_step(self.transaction.current_step, 'retry_check', 'S', 'Transaction erred out, will be retried in %s minutes.' % retry_interval)
             except Exception, msg:
