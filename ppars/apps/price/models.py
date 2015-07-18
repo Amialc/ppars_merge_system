@@ -34,32 +34,3 @@ class PlanSellingPrice(models.Model):
 
 def level_price_default():
     return SellingPriceLevel.objects.get(level='1')
-
-
-@receiver(pre_save)
-def logging_update(sender, instance, **kwargs):
-    list_of_models = (
-        'SellingPriceLevel', 'PlanSellingPrice'
-    )
-    if sender.__name__ in list_of_models:
-        http_request = get_request()
-        if instance.pk and http_request:  # if object was changed
-            from django.forms.models import model_to_dict
-            request_user = get_request().user
-            new_values = model_to_dict(instance)
-            old_values = sender.objects.get(pk=instance.pk).__dict__
-            for key in new_values.keys():
-                if key not in old_values.keys():  # because there is a things in new_values that we don't need
-                    new_values.pop(key, None)
-            changed = [key for key in new_values.keys() if ((old_values[key] != new_values[key]) and
-                                                            not ((old_values[key] is None and new_values[key] == '')
-                                                            or (old_values[key] == '' and new_values[key] is None)))]
-            update = ''
-            for key in changed:
-                update += key.replace('_', ' ').upper() + ': from ' + str(old_values[key]) + ' to ' + str(new_values[key]) + '; '
-            note = 'User %s updated %s: %s \n' % (request_user, sender.__name__, str(instance))
-            note += update
-            if request_user and request_user.is_authenticated() and update:
-                if request_user.profile.company:
-                    company = request_user.profile.company
-                    Log.objects.create(user=get_request().user, company=company, note=note)
